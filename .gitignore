@@ -1,0 +1,22 @@
+.env
+
+# 数据库与本地存储（防止上传庞大的二进制数据）
+chroma_db/
+data/
+*.db
+
+# Python 环境与缓存
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+build/
+dist/
+
+# 编辑器相关
+.vscode/
+.cursor/
+.idea/
+.DS_Store (Mac 用户专用)
