@@ -1,118 +1,118 @@
 import streamlit as st
 import requests
+import pandas as pd
+import mysql.connector
+import os
+from dotenv import load_dotenv
 import uuid
 
-# ------- 页面标题与 session_id、聊天历史管理 -------
-st.set_page_config(page_title="跨境电商智能 RAG 助手", page_icon="🤖", layout="wide")
-st.title("🛒 跨境电商智能客服")
+# 加载配置
+load_dotenv()
 
-# 生成并持久化 session_id 保证多轮状态
-if "session_id" not in st.session_state:
-    st.session_state["session_id"] = str(uuid.uuid4())
-# 使用 messages 存储对话历史，每则消息为 dict: {'role': 'user'|'ai', 'content': ...}
-if "messages" not in st.session_state:
-    st.session_state["messages"] = []
+# --- 1. 页面配置 ---
+st.set_page_config(page_title="跨境电商智能客服管理系统", layout="wide")
 
-# ------- 侧边栏：文件上传与显示上传状态 -------
-with st.sidebar:
-    st.header("📚 上传产品手册/售后政策 (PDF/TXT)")
-    upload_status = st.empty()
-    uploaded_file = st.file_uploader(
-        "选择PDF或TXT文件上传", 
-        type=['pdf', 'txt'],
-        help="支持 .pdf 和 .txt 格式"
-    )
+# --- 2. 侧边栏导航 ---
+st.sidebar.title("🚀 导航中心")
+page = st.sidebar.radio("请选择功能模块：", ["智能客服对话", "数据审计后台"])
 
-    # 文件上传逻辑
-    if uploaded_file is not None:
-        # 上传到后端API
-        upload_status.info("正在上传，请稍候...")
-        files = {"file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)}
-        try:
-            # 直接同步上传，流式与异步暂不支持
-            resp = requests.post("http://127.0.0.1:8000/upload", files=files, timeout=60)
-            if resp.status_code == 200:
-                upload_status.success(f"上传成功: {resp.json().get('message','')}")
+BACKEND_URL = "http://127.0.0.1:8000"
+
+# --- 模块一：智能客服对话 ---
+if page == "智能客服对话":
+    st.title("🛒 跨境电商智能客服 Agent")
+    
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+    if "session_id" not in st.session_state:
+        st.session_state.session_id = str(uuid.uuid4())
+
+    # 侧边栏上传
+    with st.sidebar:
+        st.divider()
+        st.header("📚 知识库管理")
+        uploaded_file = st.file_uploader("上传产品手册 (PDF/TXT)", type=["pdf", "txt"])
+        if st.button("开始入库"):
+            if uploaded_file:
+                with st.spinner("正在向量化存入 ChromaDB..."):
+                    files = {"file": (uploaded_file.name, uploaded_file.getvalue())}
+                    res = requests.post(f"{BACKEND_URL}/upload", files=files)
+                    st.success("入库成功！")
             else:
-                upload_status.error(f"上传失败: {resp.text}")
-        except Exception as e:
-            upload_status.error(f"上传异常: {str(e)}")
+                st.warning("请先选择文件")
 
-# ------- 主界面：聊天窗口呈现 -------
-st.markdown(
-    """
-    <style>
-    .user-msg {background: #DCF8C6; padding: 8px 12px; border-radius: 8px; margin-bottom:6px; max-width:80%; align-self: flex-end;}
-    .ai-msg {background: #F3F3F3; padding: 8px 12px; border-radius: 8px; margin-bottom:6px; max-width:80%; align-self: flex-start;}
-    .chat-block {display: flex; flex-direction: column;}
-    </style>
-    """, unsafe_allow_html=True
-)
+    # 聊天展示
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
 
-def stream_ai_reply(question, session_id):
-    """
-    通过 SSE 流式请求 /chat 接口，yield AI 返回内容片段
-    """
-    url = "http://127.0.0.1:8000/chat"
-    payload = {"message": question, "session_id": session_id}
-    headers = {"Content-Type": "application/json"}
-    try:
-        # 使用 requests 的 stream 模式读取 SSE
-        response = requests.post(url, headers=headers, json=payload, stream=True, timeout=180)
-
-        # 逐行处理SSE格式：data: 内容
-        for line in response.iter_lines(decode_unicode=True):
-            if not line:
-                continue
-            if line.startswith("data:"):
-                content = line[len("data:"):].strip()
-                if content == "[DONE]":
-                    break
-                yield content
-    except Exception as e:
-        # 错误时中止生成并提示
-        yield f"\n[系统提示] AI接口调用出错：{str(e)}"
-
-# ------- 用户输入，用官方 st.chat_input 方式处理 -------
-# 由于要做到“每次提问后主界面立刻展示问题和答案”，需要
-# 先在主界面渲染历史消息，然后在有新输入时，先插入用户对话，再生成AI回复，再插入AI回复，再刷新全部渲染。
-
-# 获取用户输入
-prompt = st.chat_input("请输入您要咨询的产品参数或退换货政策...（如：该产品的核心产品参数？）")
-
-# ------- 渲染历史消息（问题和答案一问一答对齐展示） -------
-# 遍历历史，每次都依次渲染（实现“问题之后跟答案”）
-for idx, msg in enumerate(st.session_state["messages"]):
-    if msg["role"] == "user":
+    if prompt := st.chat_input("请输入您要咨询的产品问题..."):
+        st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
-            st.markdown(msg["content"])
-        # 展示紧跟的AI回复（如果有）
-        if idx + 1 < len(st.session_state["messages"]) and st.session_state["messages"][idx + 1]["role"] == "ai":
-            with st.chat_message("ai"):
-                st.markdown(st.session_state["messages"][idx + 1]["content"])
+            st.markdown(prompt)
 
-# ------- 新问题触发：将用户问题和AI回复插入历史并立即按一问一答结构刷新显示 -------
-if prompt:
-    # 把当前问题追加到历史
-    st.session_state["messages"].append({"role": "user", "content": prompt})
+        with st.chat_message("assistant"):
+            placeholder = st.empty()
+            full_res = ""
+            payload = {"message": prompt, "session_id": st.session_state.session_id}
+            with requests.post(f"{BACKEND_URL}/chat", json=payload, stream=True) as r:
+                for line in r.iter_lines(decode_unicode=True):
+                    if line and line.startswith("data: "):
+                        content = line[6:]
+                        if content == "[DONE]": break
+                        full_res += content
+                        placeholder.markdown(full_res + "▌")
+            placeholder.markdown(full_res)
+        st.session_state.messages.append({"role": "assistant", "content": full_res})
 
-    # 先渲染提问（立即可见）
-    with st.chat_message("user"):
-        st.markdown(prompt)
+# --- 模块二：数据审计后台 (MySQL 可视化) ---
+elif page == "数据审计后台":
+    st.title("📊 大模型通话审计后台")
+    st.info("说明：此处数据实时读取自本地 MySQL 数据库，用于业务监控与语料分析。")
 
-    # AI回复流式显示
-    ai_reply_chunks = []  # 保存AI分片
+    try:
+        # 从环境变量解析 MySQL 连接信息（简单处理）
+        # 假设你的 MYSQL_URL 是 mysql+aiomysql://root:password@localhost:3306/ai_agent_db
+        # 这里为了演示，直接手动填入或从环境变量取
+        conn = mysql.connector.connect(
+            host="localhost",
+            user="root",
+            password="123456", 
+            database="ai_agent_db"
+        )
+        
+        # 使用 Pandas 读取数据
+        query = "SELECT id, session_id, user_query, ai_response, created_at FROM chat_logs ORDER BY created_at DESC"
+        df = pd.DataFrame(pd.read_sql(query, conn))
+        
+        # 数据统计卡片
+        col1, col2, col3 = st.columns(3)
+        col1.metric("总对话量", len(df))
+        col2.metric("活跃 Session 数", df['session_id'].nunique())
+        col3.metric("最新更新时间", str(df['created_at'].iloc[0]) if not df.empty else "无数据")
 
-    with st.chat_message("ai"):
-        reply_placeholder = st.empty()
-        def sse_writer():
-            # 按块yield AI回复并累积内容
-            for chunk in stream_ai_reply(prompt, st.session_state["session_id"]):
-                ai_reply_chunks.append(chunk)
-                yield chunk
-        # 实时渲染AI回答
-        reply_placeholder.write_stream(sse_writer)
+        # 数据表格美化
+        st.subheader("📝 全量历史记录")
+        # 截断长文本显示，防止表格太丑
+        df_display = df.copy()
+        df_display['session_id'] = df_display['session_id'].str[:8] + "..."
+        
+        st.dataframe(
+            df_display, 
+            column_config={
+                "user_query": st.column_config.TextColumn("用户提问", width="medium"),
+                "ai_response": st.column_config.TextColumn("AI 回复内容", width="large"),
+                "created_at": st.column_config.DatetimeColumn("时间", format="MM-DD HH:mm"),
+            },
+            hide_index=True,
+            use_container_width=True
+        )
+        
+        if st.button("刷新实时数据"):
+            st.rerun()
 
-    # 拼接完整AI回答，写入历史
-    full_reply = "".join(ai_reply_chunks)
-    st.session_state["messages"].append({"role": "ai", "content": full_reply})
+        conn.close()
+
+    except Exception as e:
+        st.error(f"无法读取 MySQL 数据库: {e}")
+        st.warning("请确保 MySQL 服务已启动且密码配置正确。")
