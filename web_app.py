@@ -3,8 +3,8 @@ import requests
 import uuid
 
 # ------- 页面标题与 session_id、聊天历史管理 -------
-st.set_page_config(page_title="HDU 工业智能 RAG 助手", page_icon="🤖", layout="wide")
-st.title("🤖 HDU 工业智能 RAG 助手")
+st.set_page_config(page_title="跨境电商智能 RAG 助手", page_icon="🤖", layout="wide")
+st.title("🛒 跨境电商智能客服")
 
 # 生成并持久化 session_id 保证多轮状态
 if "session_id" not in st.session_state:
@@ -15,7 +15,7 @@ if "messages" not in st.session_state:
 
 # ------- 侧边栏：文件上传与显示上传状态 -------
 with st.sidebar:
-    st.header("📄 知识库文档上传")
+    st.header("📚 上传产品手册/售后政策 (PDF/TXT)")
     upload_status = st.empty()
     uploaded_file = st.file_uploader(
         "选择PDF或TXT文件上传", 
@@ -78,7 +78,7 @@ def stream_ai_reply(question, session_id):
 # 先在主界面渲染历史消息，然后在有新输入时，先插入用户对话，再生成AI回复，再插入AI回复，再刷新全部渲染。
 
 # 获取用户输入
-prompt = st.chat_input("请输入您的问题，Enter 发送（如：团队构成有哪些？）")
+prompt = st.chat_input("请输入您要咨询的产品参数或退换货政策...（如：该产品的核心产品参数？）")
 
 # ------- 渲染历史消息（问题和答案一问一答对齐展示） -------
 # 遍历历史，每次都依次渲染（实现“问题之后跟答案”）
